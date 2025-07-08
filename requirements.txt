@@ -1,0 +1,12 @@
+streamlit
+langchain
+langchain-community
+langchain-google-genai  # For Gemini
+ollama                  # For local models
+langchain-openai        # For OpenAI and compatible models
+chromadb
+pypdf
+python-docx
+unstructured
+sentence-transformers # For embedding
+pandas 

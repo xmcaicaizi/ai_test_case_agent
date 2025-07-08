@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Databases
+*.sqlite3
+db/chroma_db/
+
+# Secrets - IMPORTANT
+.streamlit/secrets.toml
+secrets.toml
+*.env
+
+# IDE settings
+.vscode/
+.idea/
+
+# Testing artifacts
+.pytest_cache/
+htmlcov/
+
+# Temporary files created by tests
+temp_kb/
+temp_db/
+temp_kb_for_rag/
+temp_db_for_rag/ 
