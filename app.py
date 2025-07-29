@@ -22,6 +22,10 @@ st.set_page_config(
 # --- 主标题 ---
 st.title("🤖 AI-TGA: 智能测试用例生成平台")
 
+
+
+
+
 # --- 初始化 session state ---
 # 用于在页面刷新间保持状态
 if 'model_settings' not in st.session_state:
@@ -31,12 +35,20 @@ if 'model_settings' not in st.session_state:
         'base_url': 'http://127.0.0.1:11434'
     }
 
-if 'knowledge_base_status' not in st.session_state:
-    st.session_state.knowledge_base_status = {
-        "status": "尚未初始化",
-        "doc_count": 0,
-        "chunk_count": 0,
-    }
+# --- 常量定义 ---
+KNOWLEDGE_BASE_DIR = "knowledge_files"
+CHROMA_DB_DIR = os.path.join("db", "chroma_db")
+
+# 确保目录存在
+os.makedirs(KNOWLEDGE_BASE_DIR, exist_ok=True)
+os.makedirs(CHROMA_DB_DIR, exist_ok=True)
+
+
+# --- 核心逻辑函数 ---
+@st.cache_resource
+def get_kb_manager():
+    """缓存知识库管理器实例"""
+    return KnowledgeBaseManager(knowledge_base_dir=KNOWLEDGE_BASE_DIR, chroma_db_dir=CHROMA_DB_DIR)
 
 # --- 清理函数 ---
 def cleanup_directories():
@@ -66,20 +78,14 @@ def cleanup_directories():
 if 'generated_cases' not in st.session_state:
     st.session_state.generated_cases = None
 
-# --- 常量定义 ---
-KNOWLEDGE_BASE_DIR = "knowledge_files"
-CHROMA_DB_DIR = os.path.join("db", "chroma_db")
-
-# 确保目录存在
-os.makedirs(KNOWLEDGE_BASE_DIR, exist_ok=True)
-os.makedirs(CHROMA_DB_DIR, exist_ok=True)
-
-
-# --- 核心逻辑函数 ---
-@st.cache_resource
-def get_kb_manager():
-    """缓存知识库管理器实例"""
-    return KnowledgeBaseManager(knowledge_base_dir=KNOWLEDGE_BASE_DIR, chroma_db_dir=CHROMA_DB_DIR)
+if 'knowledge_base_status' not in st.session_state:
+    kb_manager = get_kb_manager()
+    status = kb_manager.get_status()
+    st.session_state.knowledge_base_status = {
+        "status": "已加载",
+        "doc_count": status['doc_count'],
+        "chunk_count": status['chunk_count'],
+    }
 
 # --- 创建主页面标签 ---
 tab_generate, tab_kb, tab_settings = st.tabs([
