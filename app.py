@@ -6,6 +6,7 @@ Streamlit 主应用文件
 import streamlit as st
 import os
 import pandas as pd
+import io
 from core.knowledge_base import KnowledgeBaseManager
 from core.llm_integrator import LLMIntegrator
 from core.rag_chain import create_rag_chain
@@ -31,9 +32,33 @@ if 'model_settings' not in st.session_state:
     }
 
 if 'knowledge_base_status' not in st.session_state:
-    # 更详细的状态
     st.session_state.knowledge_base_status = {
         "status": "尚未初始化",
+        "doc_count": 0,
+        "chunk_count": 0,
+    }
+
+# --- 清理函数 ---
+def cleanup_directories():
+    """清理知识库和数据库目录"""
+    import shutil
+    # 停止并等待文件释放
+    if os.path.exists(KNOWLEDGE_BASE_DIR):
+        shutil.rmtree(KNOWLEDGE_BASE_DIR, ignore_errors=True)
+    if os.path.exists(CHROMA_DB_DIR):
+        shutil.rmtree(CHROMA_DB_DIR, ignore_errors=True)
+    
+    # 短暂等待以确保文件句柄被释放
+    import time
+    time.sleep(1)
+
+    os.makedirs(KNOWLEDGE_BASE_DIR, exist_ok=True)
+    os.makedirs(CHROMA_DB_DIR, exist_ok=True)
+    
+    # 重置缓存和状态
+    st.cache_resource.clear()
+    st.session_state.knowledge_base_status = {
+        "status": "已重置",
         "doc_count": 0,
         "chunk_count": 0,
     }
@@ -74,7 +99,7 @@ with tab_generate:
         
         user_requirement = st.text_area("1. 输入您的需求描述", height=200, placeholder="例如：设计一个用户登录功能的测试用例，需要考虑正常登录、异常密码、锁定策略等场景。")
         
-        uploaded_file = st.file_uploader("2. (可选) 上传需求文档", type=['txt', 'pdf', 'docx'])
+        uploaded_file = st.file_uploader("2. (可选) 上传需求文档", type=['txt', 'pdf', 'docx', 'xlsx'])
         
         st.write("---")
         
@@ -88,7 +113,8 @@ with tab_generate:
         
         # 从 session_state 获取当前模型用于显示
         current_model_provider = st.session_state.model_settings.get('provider', 'N/A')
-        st.info(f"当前模型: **{current_model_provider}**")
+        st.info(f"当前LLM: **{st.session_state.model_settings.get('model_name', 'qwen3:4b')}**")
+        st.info(f"当前Embedding: **dengcao/Qwen3-Embedding-0.6B:Q8_0**")
 
         if st.button("🚀 生成测试用例", type="primary", use_container_width=True):
             if not user_requirement and not uploaded_file:
@@ -100,7 +126,7 @@ with tab_generate:
                         model_settings = st.session_state.model_settings
                         llm_integrator = LLMIntegrator(
                             model_provider=model_settings['provider'],
-                            model_name='qwen:0.5b-chat-v1.5-q4_0', # 暂时硬编码，后续应从UI获取
+                            model_name=st.session_state.model_settings.get('model_name', 'qwen3:4b'),
                             api_key=model_settings['api_key'],
                             base_url=model_settings['base_url']
                         )
@@ -158,6 +184,17 @@ with tab_generate:
                     st.json(results)
                     
                 with result_tabs[2]:
+                    # 导出为Excel
+                    excel_buffer = io.BytesIO()
+                    df.to_excel(excel_buffer, index=False, engine='openpyxl')
+                    st.download_button(
+                        label="下载为 Excel",
+                        data=excel_buffer,
+                        file_name="test_cases.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+                    # 导出为JSON
                     st.download_button(
                         label="下载为 JSON",
                         data=pd.io.json.dumps(results, indent=2),
@@ -181,28 +218,51 @@ with tab_generate:
 with tab_kb:
     st.header("管理您的知识库文档")
     
-    st.info(f"当前状态: **{st.session_state.knowledge_base_status['status']}** | "
-            f"文档数量: **{st.session_state.knowledge_base_status['doc_count']}** | "
-            f"知识片段总数: **{st.session_state.knowledge_base_status['chunk_count']}**")
-    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.info(f"当前状态: **{st.session_state.knowledge_base_status['status']}** | "
+                f"文档数量: **{st.session_state.knowledge_base_status['doc_count']}** | "
+                f"知识片段总数: **{st.session_state.knowledge_base_status['chunk_count']}**")
+    with col2:
+        if st.button("🔄 刷新状态", use_container_width=True, help="清理所有已上传的文档和数据库，重置知识库状态"):
+            cleanup_directories()
+            st.success("知识库已重置！")
+            st.rerun()
+            try:
+                kb_manager = get_kb_manager()
+                status = kb_manager.get_status()
+                st.session_state.knowledge_base_status['status'] = "状态已刷新"
+                st.session_state.knowledge_base_status['doc_count'] = status['doc_count']
+                st.session_state.knowledge_base_status['chunk_count'] = status['chunk_count']
+                st.rerun()
+            except Exception as e:
+                st.error(f"刷新状态时出错: {e}")
+
     uploaded_docs = st.file_uploader(
-        "上传产品文档、需求文档、历史用例等 (.pdf, .docx, .txt)", 
+        "上传产品文档、需求文档、历史用例等 (.pdf, .docx, .txt, .xlsx)", 
         accept_multiple_files=True,
-        type=['pdf', 'docx', 'txt']
+        type=['pdf', 'docx', 'txt', 'xlsx']
     )
     
-    if st.button("处理上传的文档", use_container_width=True):
+    if st.button("处理上传的文档", use_container_width=True, type="primary"):
         if uploaded_docs:
-            with st.spinner("正在保存并处理上传的文档..."):
-                for doc in uploaded_docs:
-                    # 保存文件到知识库目录
-                    file_path = os.path.join(KNOWLEDGE_BASE_DIR, doc.name)
-                    with open(file_path, "wb") as f:
-                        f.write(doc.getbuffer())
-                
-                # 获取知识库管理器并处理文档
+            # Save files first
+            for doc in uploaded_docs:
+                file_path = os.path.join(KNOWLEDGE_BASE_DIR, doc.name)
+                with open(file_path, "wb") as f:
+                    f.write(doc.getbuffer())
+            
+            # Now, process them with a progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def progress_callback(progress, message):
+                progress_bar.progress(progress / 100)
+                status_text.info(message)
+
+            try:
                 kb_manager = get_kb_manager()
-                kb_manager.load_and_process_documents()
+                kb_manager.load_and_process_documents(progress_callback=progress_callback)
 
                 # 更新状态
                 status = kb_manager.get_status()
@@ -212,6 +272,8 @@ with tab_kb:
                 
                 st.success("文档处理成功！知识库已更新。")
                 st.rerun()
+            except Exception as e:
+                st.error(f"处理文档时出错: {e}")
         else:
             st.warning("请先上传文档。")
         
@@ -232,6 +294,19 @@ with tab_kb:
 
 # --- 页面三：模型设置 ---
 with tab_settings:
+    st.header("配置您的AI模型")
+
+    provider = st.selectbox("选择模型提供商", ['Ollama', 'Gemini', 'OpenAICompatible'], index=0)
+    st.session_state.model_settings['provider'] = provider
+
+    if provider == 'Ollama':
+        model_name = st.text_input("模型名称", value=st.session_state.model_settings.get('model_name', 'qwen3:4b'))
+        base_url = st.text_input("Ollama Base URL", value=st.session_state.model_settings.get('base_url', 'http://127.0.0.1:11434'))
+        st.session_state.model_settings['model_name'] = model_name
+        st.session_state.model_settings['base_url'] = base_url
+    
+    # ... (其他提供商的设置)
+
     st.header("配置语言模型 (LLM)")
 
     provider = st.selectbox(

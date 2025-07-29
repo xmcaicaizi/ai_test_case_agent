@@ -62,7 +62,7 @@ class LLMIntegrator:
 if __name__ == '__main__':
     # Test Ollama
     try:
-        ollama_integrator = LLMIntegrator(model_provider='Ollama', model_name='qwen:0.5b-chat-v1.5-q4_0')
+        ollama_integrator = LLMIntegrator(model_provider='Ollama', model_name='qwen3:4b')
         ollama_llm = ollama_integrator.get_llm()
         print("Ollama LLM instance created successfully:", ollama_llm)
         # response = ollama_llm.invoke("Hello, who are you?")

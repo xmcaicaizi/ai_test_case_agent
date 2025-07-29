@@ -5,8 +5,12 @@ langchain-google-genai  # For Gemini
 ollama                  # For local models
 langchain-openai        # For OpenAI and compatible models
 chromadb
+langchain-huggingface
+langchain-chroma
+openpyxl
+msoffcrypto-tool
 pypdf
 python-docx
 unstructured
 sentence-transformers # For embedding
-pandas 
+pandas

@@ -3,13 +3,16 @@
 该文件实现知识库管理，包括文档加载、文本切分、向量化和存储。
 """
 import os
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, Docx2txtLoader, TextLoader
+import pandas as pd
+import glob
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredExcelLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_chroma import Chroma
+from langchain.docstore.document import Document
 
 class KnowledgeBaseManager:
-    def __init__(self, knowledge_base_dir, chroma_db_dir, embedding_model_name='sentence-transformers/all-MiniLM-L6-v2'):
+    def __init__(self, knowledge_base_dir="knowledge_files", chroma_db_dir="db/chroma_db", embedding_model_name="dengcao/Qwen3-Embedding-0.6B:Q8_0"):
         """
         初始化知识库管理器。
 
@@ -20,81 +23,88 @@ class KnowledgeBaseManager:
         self.knowledge_base_dir = knowledge_base_dir
         self.chroma_db_dir = chroma_db_dir
         self.embedding_model_name = embedding_model_name
-        self.embedding_function = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
+        self.embedding_function = OllamaEmbeddings(model=self.embedding_model_name)
         self.vector_store = self._get_or_initialize_vector_store()
 
     def _get_or_initialize_vector_store(self):
         """
         加载或初始化向量数据库。
         """
-        if os.path.exists(self.chroma_db_dir) and os.listdir(self.chroma_db_dir):
-            print(f"Loading existing ChromaDB from {self.chroma_db_dir}")
-            return Chroma(
-                persist_directory=self.chroma_db_dir,
-                embedding_function=self.embedding_function
-            )
-        else:
-            print(f"Initializing new, empty ChromaDB at {self.chroma_db_dir}")
-            os.makedirs(self.chroma_db_dir, exist_ok=True)
-            # The vector store is created empty and documents will be added later.
-            return Chroma(
-                persist_directory=self.chroma_db_dir,
-                embedding_function=self.embedding_function
-            )
+        # Chroma will automatically create the directory if it doesn't exist
+        return Chroma(
+            persist_directory=self.chroma_db_dir,
+            embedding_function=self.embedding_function
+        )
 
-    def load_and_process_documents(self, chunk_size=1000, chunk_overlap=200):
+    def _load_excel_documents(self):
+        """
+        Loads and splits Excel files into documents (one per row).
+        """
+        split_docs = []
+        excel_files = glob.glob(os.path.join(self.knowledge_base_dir, "**/*.xlsx"), recursive=True)
+        for file_path in excel_files:
+            try:
+                df = pd.read_excel(file_path)
+                headers = "\t".join(df.columns)
+                for _, row in df.iterrows():
+                    row_content = "\t".join(map(str, row.values))
+                    content = f"{headers}\n{row_content}"
+                    metadata = {"source": file_path}
+                    split_docs.append(Document(page_content=content, metadata=metadata))
+            except Exception as e:
+                print(f"Error processing excel file {file_path}: {e}")
+        return split_docs
+
+    def load_and_process_documents(self, chunk_size=1000, chunk_overlap=200, progress_callback=None):
         """
         加载、切分、向量化并存储知识库目录中的所有文档。
+        :param progress_callback: 一个用于报告进度的回调函数。
         """
         print(f"Loading documents from {self.knowledge_base_dir}...")
-        
-        # 为不同文件类型创建加载器列表
-        loaders = []
-        for ext in ["**/*.pdf", "**/*.docx", "**/*.txt"]:
-            loader_cls = None
-            if ext.endswith(".pdf"):
-                loader_cls = PyPDFLoader
-            elif ext.endswith(".docx"):
-                loader_cls = Docx2txtLoader
-            elif ext.endswith(".txt"):
-                loader_cls = TextLoader
-            
-            # 使用glob来查找文件并为每个文件创建加载器
-            # DirectoryLoader now works on a directory path and a glob pattern.
-            # We can create a loader for each file type we want to support.
-            
-        # Updated DirectoryLoader usage
-        # Instead of loader_map, we can use different loaders and combine docs.
-        # A simpler approach is to load them separately.
-        
+        if progress_callback: progress_callback(0, "开始加载文档...")
+
         pdf_loader = DirectoryLoader(self.knowledge_base_dir, glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True, use_multithreading=True)
         docx_loader = DirectoryLoader(self.knowledge_base_dir, glob="**/*.docx", loader_cls=Docx2txtLoader, show_progress=True, use_multithreading=True)
         txt_loader = DirectoryLoader(self.knowledge_base_dir, glob="**/*.txt", loader_cls=TextLoader, loader_kwargs={'encoding': 'utf-8'}, show_progress=True, use_multithreading=True)
         
-        documents = []
-        documents.extend(pdf_loader.load())
-        documents.extend(docx_loader.load())
-        documents.extend(txt_loader.load())
+        standard_docs = []
+        standard_docs.extend(pdf_loader.load())
+        standard_docs.extend(docx_loader.load())
+        standard_docs.extend(txt_loader.load())
+        if progress_callback: progress_callback(20, "标准文档加载完成，开始加载 Excel 文件...")
 
-        if not documents:
-            print("No documents found to process.")
-            return
+        excel_split_docs = self._load_excel_documents()
+        if progress_callback: progress_callback(40, "Excel 文件加载完成，开始切分文档...")
 
-        print(f"Loaded {len(documents)} documents.")
-
-        # 切分文档
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap
         )
-        split_docs = text_splitter.split_documents(documents)
-        print(f"Split documents into {len(split_docs)} chunks.")
+        standard_split_docs = text_splitter.split_documents(standard_docs)
 
-        # 向量化并存入ChromaDB
-        print("Embedding documents and adding to ChromaDB...")
-        self.vector_store.add_documents(split_docs)
-        self.vector_store.persist()
+        all_split_docs = excel_split_docs + standard_split_docs
+
+        if not all_split_docs:
+            print("No documents found to process.")
+            if progress_callback: progress_callback(100, "未找到可处理的文档。")
+            return
+
+        total_chunks = len(all_split_docs)
+        print(f"Split documents into {total_chunks} chunks.")
+        if progress_callback: progress_callback(60, f"文档切分完成，共 {total_chunks} 个片段。开始向量化...")
+
+        # Vectorize and store in ChromaDB
+        batch_size = 500
+        for i in range(0, total_chunks, batch_size):
+            batch_docs = all_split_docs[i:i + batch_size]
+            self.vector_store.add_documents(batch_docs)
+            
+            progress = 60 + int((i + len(batch_docs)) / total_chunks * 40)
+            if progress_callback: 
+                progress_callback(progress, f"正在处理 {i + len(batch_docs)} / {total_chunks} 个片段...")
+
         print("Knowledge base processing complete.")
+        if progress_callback: progress_callback(100, "知识库处理完成！")
 
     def get_retriever(self, search_type="similarity", search_kwargs={"k": 5}):
         """
