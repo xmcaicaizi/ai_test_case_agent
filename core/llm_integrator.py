@@ -49,7 +49,7 @@ class LLMIntegrator:
                 base_url=base_url
             )
         elif self.model_provider == 'Doubao':
-            base_url = self.base_url or "https://ark.cn-beijing.volcengineapi.com"
+            base_url = self.base_url or "https://ark.cn-beijing.volces.com/api/v3"
             if not self.api_key:
                 raise ValueError("API key is required for Doubao.")
             return ChatOpenAI(

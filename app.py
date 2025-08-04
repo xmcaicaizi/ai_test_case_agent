@@ -184,6 +184,29 @@ with tab_generate:
                         features = model_info.get('features', [])
                         if features:
                             st.write(f"**特性**: {', '.join(features)}")
+            elif current_model and current_model.get('provider') == 'Doubao':
+                from core.doubao_config import get_doubao_model_info
+                model_info = get_doubao_model_info(current_model.get('model_name', ''))
+                if model_info:
+                    with st.expander("📊 模型详情", expanded=False):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**描述**: {model_info.get('description', 'N/A')}")
+                            st.write(f"**上下文长度**: {model_info.get('context_length', 'N/A'):,} tokens")
+                            st.write(f"**最大输出**: {model_info.get('max_output', 'N/A'):,} tokens")
+                        with col2:
+                            cost_info = model_info.get('cost_per_1k_tokens', {})
+                            if 'tiered_pricing' in cost_info:
+                                st.write("**分层定价**:")
+                                for tier in cost_info['tiered_pricing']:
+                                    st.write(f"  - {tier['range']}: 输入 ¥{tier['input']}/1k, 输出 ¥{tier['output']}/1k")
+                            else:
+                                st.write(f"**输入成本**: ¥{cost_info.get('input', 0)}/1K tokens")
+                                st.write(f"**输出成本**: ¥{cost_info.get('output', 0)}/1K tokens")
+                        
+                        features = model_info.get('features', [])
+                        if features:
+                            st.write(f"**特性**: {', '.join(features)}")
             
             if selected_model_name != st.session_state.active_model_name:
                 st.session_state.active_model_name = selected_model_name
@@ -494,6 +517,70 @@ with tab_settings:
 
     st.write("---")
 
+    # --- 豆包快速配置 --- #
+    st.subheader("🔥 豆包快速配置")
+    with st.expander("点击展开豆包模型配置", expanded=False):
+        st.info("豆包支持 OpenAI Compatible API，只需要您的 API Key 即可快速配置。")
+        
+        doubao_api_key = st.text_input(
+            "豆包 API Key", 
+            type="password",
+            placeholder="ak-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            help="请在火山引擎控制台获取您的 API Key"
+        )
+        
+        if doubao_api_key:
+            from core.doubao_config import get_doubao_model_list, validate_doubao_api_key
+            
+            if validate_doubao_api_key(doubao_api_key):
+                st.success("✅ API Key 格式验证通过")
+                
+                doubao_models = get_doubao_model_list()
+                selected_doubao_models = st.multiselect(
+                    "选择要添加的豆包模型",
+                    options=[model["model_name"] for model in doubao_models],
+                    default=["doubao-seed-1.6"],
+                    format_func=lambda x: next((model["display_name"] + f" - {model['description']}" for model in doubao_models if model["model_name"] == x), x)
+                )
+                
+                if st.button("🎯 一键添加选中的豆包模型", type="primary"):
+                    added_count = 0
+                    for model_name in selected_doubao_models:
+                        model_info = next((model for model in doubao_models if model["model_name"] == model_name), None)
+                        if model_info:
+                            # 检查是否已存在相同的模型
+                            existing_model = next((m for m in st.session_state.models if m.get('provider') == 'Doubao' and m.get('model_name') == model_name), None)
+                            if not existing_model:
+                                new_model = {
+                                    'name': model_info["display_name"],
+                                    'provider': 'Doubao',
+                                    'model_name': model_name,
+                                    'api_key': doubao_api_key,
+                                    'base_url': 'https://ark.cn-beijing.volces.com/api/v3',
+                                    'description': model_info["description"],
+                                    'context_length': model_info["context_length"],
+                                    'cost_per_1k_tokens': model_info["cost_info"]
+                                }
+                                st.session_state.models.append(new_model)
+                                added_count += 1
+                    
+                    if added_count > 0:
+                        config_manager.set_config('models', st.session_state.models)
+                        
+                        # 如果是第一次添加模型，设为活动模型
+                        if len(st.session_state.models) == added_count:
+                            st.session_state.active_model_name = st.session_state.models[0]['name']
+                            config_manager.set_config('active_model_name', st.session_state.models[0]['name'])
+                        
+                        st.success(f"✅ 成功添加 {added_count} 个豆包模型！")
+                        st.rerun()
+                    else:
+                        st.warning("所选模型已存在，未添加新模型。")
+            else:
+                st.error("❌ API Key 格式不正确，请检查后重试")
+
+    st.write("---")
+
     # --- 添加/编辑模型表单 --- #
     st.subheader("手动添加模型")
     with st.form(key="add_model_form"):
@@ -504,6 +591,13 @@ with tab_settings:
         if provider == 'Qwen':
             model_name = st.selectbox("通义千问模型*", ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-plus-latest', 'qwen-turbo-latest', 'qwen-max-latest'])
             base_url = st.text_input("Base URL", value="https://dashscope.aliyuncs.com/compatible-mode/v1")
+        elif provider == 'Doubao':
+            model_name = st.text_input(
+                "推理接入点 (Model ID)*",
+                placeholder="ep-20250101000000-xxxxx",
+                help="请输入在火山引擎控制台创建的推理接入点 ID"
+            )
+            base_url = st.text_input("Base URL", value="https://ark.cn-beijing.volces.com/api/v3")
         elif provider == 'Ollama':
             model_name = st.text_input("模型名称*", placeholder="例如：qwen3:4b, llama3:8b")
             base_url = st.text_input("Base URL", value="http://127.0.0.1:11434")

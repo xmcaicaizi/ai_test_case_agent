@@ -51,6 +51,46 @@
                 "input": 0.02,
                 "output": 0.06
             }
+        },
+        {
+            "name": "豆包 Seed 1.6",
+            "provider": "Doubao",
+            "model_name": "ep-20250101000000-xxxxx",
+            "api_key": "",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "description": "最新一代豆包大模型，具备更强的推理能力、多模态理解能力、GUI操作能力",
+            "context_length": 256000,
+            "cost_per_1k_tokens": {
+                "input": 0.0008,
+                "output": 0.008
+            }
+        },
+        {
+            "name": "豆包 Seed 1.6 Flash",
+            "provider": "Doubao",
+            "model_name": "ep-20250101000001-xxxxx",
+            "api_key": "",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "description": "轻量版深度思考模型，极致推理速度，在轻量版语言模型中处于全球一流水平",
+            "context_length": 256000,
+            "cost_per_1k_tokens": {
+                "input": 0.00015,
+                "output": 0.0015
+            }
+        },
+        {
+            "name": "豆包 1.5 Pro 32K",
+            "provider": "Doubao",
+            "model_name": "ep-20250101000002-xxxxx",
+            "api_key": "",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "description": "经典版本豆包模型，稳定可靠，适合生产环境使用",
+            "context_length": 32000,
+            "cost_per_1k_tokens": {
+                "input": 0.0008,
+                "output": 0.002
+            }
         }
-    ]
+    ],
+    "active_model_name": "默认Ollama模型"
 }
