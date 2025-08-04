@@ -1,0 +1,56 @@
+{
+    "model_settings": {
+        "provider": "Qwen",
+        "model_name": "qwen-plus",
+        "api_key": "sk-54f3cfac336a4dd48e208032c985916d",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    },
+    "models": [
+        {
+            "name": "默认Ollama模型",
+            "provider": "Ollama",
+            "model_name": "qwen3:4b",
+            "api_key": "",
+            "base_url": "http://127.0.0.1:11434"
+        },
+        {
+            "name": "通义千问-Plus",
+            "provider": "Qwen",
+            "model_name": "qwen-plus",
+            "api_key": "sk-54f3cfac336a4dd48e208032c985916d",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "description": "通义千问Plus版本，平衡性能与成本，适合大多数场景",
+            "context_length": 131072,
+            "cost_per_1k_tokens": {
+                "input": 0.004,
+                "output": 0.012
+            }
+        },
+        {
+            "name": "通义千问-Turbo",
+            "provider": "Qwen",
+            "model_name": "qwen-turbo",
+            "api_key": "sk-54f3cfac336a4dd48e208032c985916d",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "description": "通义千问Turbo版本，响应速度快，成本较低",
+            "context_length": 131072,
+            "cost_per_1k_tokens": {
+                "input": 0.002,
+                "output": 0.006
+            }
+        },
+        {
+            "name": "通义千问-Max",
+            "provider": "Qwen",
+            "model_name": "qwen-max",
+            "api_key": "sk-54f3cfac336a4dd48e208032c985916d",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "description": "通义千问Max版本，最强性能，适合复杂任务",
+            "context_length": 1000000,
+            "cost_per_1k_tokens": {
+                "input": 0.02,
+                "output": 0.06
+            }
+        }
+    ]
+}

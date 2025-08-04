@@ -79,8 +79,7 @@ if __name__ == '__main__':
     # This is a mock setup for demonstrating the chain structure.
     # To run this, you would need actual instances of a retriever and an llm.
     
-    from .llm_integrator import LLMIntegrator
-    from .knowledge_base import KnowledgeBaseManager
+    from .factory import AppFactory
     import os
 
     print("--- RAG Chain Test ---")
@@ -96,16 +95,16 @@ if __name__ == '__main__':
 
     # 2. 初始化知识库和LLM
     try:
-        kb_manager = KnowledgeBaseManager(knowledge_base_dir=KB_DIR, chroma_db_dir=DB_DIR)
+        kb_manager = AppFactory.create_kb_manager(KB_DIR, DB_DIR, 'nomic-embed-text')
         kb_manager.load_and_process_documents()
         retriever = kb_manager.get_retriever()
 
         # 使用Ollama进行测试，请确保Ollama服务正在运行
-        llm_integrator = LLMIntegrator(model_provider='Ollama', model_name='qwen3:4b')
+        llm_integrator = AppFactory.create_llm_integrator('Ollama', 'qwen3:4b')
         llm = llm_integrator.get_llm()
 
         # 3. 创建RAG链
-        rag_chain = create_rag_chain(retriever, llm, num_cases=2)
+        rag_chain = AppFactory.create_rag_chain(retriever, llm, 2)
         print("RAG Chain created successfully.")
         
         # 4. 调用链并打印结果

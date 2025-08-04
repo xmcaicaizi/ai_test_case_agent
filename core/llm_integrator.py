@@ -39,6 +39,24 @@ class LLMIntegrator:
             os.environ["GOOGLE_API_KEY"] = self.api_key
             return ChatGoogleGenerativeAI(model=self.model_name)
         
+        elif self.model_provider == 'Qwen':
+            base_url = self.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            if not self.api_key:
+                raise ValueError("API key is required for Qwen.")
+            return ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                base_url=base_url
+            )
+        elif self.model_provider == 'Doubao':
+            base_url = self.base_url or "https://ark.cn-beijing.volcengineapi.com"
+            if not self.api_key:
+                raise ValueError("API key is required for Doubao.")
+            return ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                base_url=base_url
+            )
         elif self.model_provider == 'OpenAICompatible':
             if not self.api_key:
                 raise ValueError("API key is required for OpenAI compatible models.")

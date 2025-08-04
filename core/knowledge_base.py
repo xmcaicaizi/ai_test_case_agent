@@ -5,14 +5,72 @@
 import os
 import pandas as pd
 import glob
+import time
+import requests
+import json
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, Docx2txtLoader, TextLoader, UnstructuredExcelLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_chroma import Chroma
 from langchain.docstore.document import Document
+from typing import List
+
+class CustomOllamaEmbeddings(Embeddings):
+    def __init__(self, model: str, base_url: str = "http://localhost:11434", max_retries: int = 3, retry_delay: float = 1.0):
+        self.model = model
+        self.base_url = base_url
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+    def _call_ollama_with_retry(self, text: str) -> List[float]:
+        """调用Ollama embedding API，带重试机制"""
+        for attempt in range(self.max_retries):
+            try:
+                # 使用requests直接调用API
+                # 为Qwen3 embedding模型添加特殊标记
+                processed_text = text
+                if "qwen3-embedding" in self.model.lower():
+                    processed_text += "<|endoftext|>"
+
+                response = requests.post(
+                    f"{self.base_url}/api/embed",
+                    json={"model": self.model, "input": processed_text},
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                response.raise_for_status()
+                result = response.json()
+                return result["embeddings"][0]
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    # 最后一次尝试失败，抛出详细错误
+                    raise Exception(f"Ollama embedding failed after {self.max_retries} attempts. "
+                                  f"Model: {self.model}, Error: {str(e)}. "
+                                  f"Please check if Ollama service is running and the model '{self.model}' is available.")
+                else:
+                    print(f"Ollama embedding attempt {attempt + 1} failed: {str(e)}. Retrying in {self.retry_delay}s...")
+                    time.sleep(self.retry_delay)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        embeddings = []
+        for i, text in enumerate(texts):
+            try:
+                embedding = self._call_ollama_with_retry(text)
+                embeddings.append(embedding)
+            except Exception as e:
+                print(f"Failed to embed document {i+1}/{len(texts)}: {str(e)}")
+                raise
+        return embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        try:
+            return self._call_ollama_with_retry(text)
+        except Exception as e:
+            print(f"Failed to embed query: {str(e)}")
+            raise
 
 class KnowledgeBaseManager:
-    def __init__(self, knowledge_base_dir="knowledge_files", chroma_db_dir="db/chroma_db", embedding_model_name="dengcao/Qwen3-Embedding-0.6B:Q8_0"):
+    def __init__(self, knowledge_base_dir="knowledge_files", chroma_db_dir="db/chroma_db", embedding_model_name="nomic-embed-text"):
         """
         初始化知识库管理器。
 
@@ -23,18 +81,62 @@ class KnowledgeBaseManager:
         self.knowledge_base_dir = knowledge_base_dir
         self.chroma_db_dir = chroma_db_dir
         self.embedding_model_name = embedding_model_name
-        self.embedding_function = OllamaEmbeddings(model=self.embedding_model_name)
-        self.vector_store = self._get_or_initialize_vector_store()
+        self.embedding_function = None
+        self.vector_store = None
+        self.is_available = False  # 标记知识库是否可用
 
-    def _get_or_initialize_vector_store(self):
+    def set_embedding_model(self, embedding_model_name: str):
         """
-        加载或初始化向量数据库。
+        动态设置并重新初始化嵌入模型和向量数据库。
         """
-        # Chroma will automatically create the directory if it doesn't exist
-        return Chroma(
-            persist_directory=self.chroma_db_dir,
-            embedding_function=self.embedding_function
-        )
+        print(f"Setting embedding model to: {embedding_model_name}")
+        self.embedding_model_name = embedding_model_name
+        self.embedding_function = None
+        self.vector_store = None
+        self.is_available = False
+        self._ensure_initialized()
+
+    def _test_ollama_connection(self, model_name: str = None) -> bool:
+        """测试Ollama连接是否可用，可以指定模型"""
+        model_to_test = model_name if model_name else self.embedding_model_name
+        try:
+            # 使用requests测试embedding功能
+            # 为Qwen3 embedding模型添加特殊标记
+            test_input = "test"
+            if "qwen3-embedding" in model_to_test.lower():
+                test_input += "<|endoftext|>"
+
+            response = requests.post(
+                f"http://localhost:11434/api/embed",
+                json={"model": model_to_test, "input": test_input},
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"Ollama embedding test failed for model {model_to_test}: {str(e)}")
+            return False
+
+    def _ensure_initialized(self):
+        """确保 embedding_function 和 vector_store 已初始化。"""
+        if self.embedding_function is None:
+            # 首先测试Ollama是否可用
+            if self._test_ollama_connection():
+                try:
+                    self.embedding_function = CustomOllamaEmbeddings(model=self.embedding_model_name)
+                    self.vector_store = Chroma(
+                        persist_directory=self.chroma_db_dir,
+                        embedding_function=self.embedding_function
+                    )
+                    self.is_available = True
+                    print("Knowledge base initialized successfully with Ollama embeddings.")
+                except Exception as e:
+                    print(f"Failed to initialize knowledge base with Ollama: {str(e)}")
+                    self.is_available = False
+            else:
+                print("Ollama embedding service is not available. Knowledge base features will be disabled.")
+                self.is_available = False
 
     def _load_excel_documents(self):
         """
@@ -60,6 +162,13 @@ class KnowledgeBaseManager:
         加载、切分、向量化并存储知识库目录中的所有文档。
         :param progress_callback: 一个用于报告进度的回调函数。
         """
+        self._ensure_initialized()
+        if not self.is_available:
+            if progress_callback:
+                progress_callback(100, "知识库服务不可用，跳过文档处理。")
+            print("Knowledge base is not available. Skipping document processing.")
+            return
+            
         print(f"Loading documents from {self.knowledge_base_dir}...")
         if progress_callback: progress_callback(0, "开始加载文档...")
 
@@ -103,6 +212,7 @@ class KnowledgeBaseManager:
             if progress_callback: 
                 progress_callback(progress, f"正在处理 {i + len(batch_docs)} / {total_chunks} 个片段...")
 
+        self.vector_store.persist()  # 强制持久化
         print("Knowledge base processing complete.")
         if progress_callback: progress_callback(100, "知识库处理完成！")
 
@@ -114,9 +224,10 @@ class KnowledgeBaseManager:
         :param search_kwargs: 检索参数 (e.g., {"k": 5})
         :return: LangChain Retriever
         """
-        if not self.vector_store:
-            # This case should ideally not be hit with the new logic
-            raise ValueError("Vector store is not initialized.")
+        self._ensure_initialized()
+        if not self.is_available:
+            print("Knowledge base is not available. Cannot create retriever.")
+            return None
         return self.vector_store.as_retriever(search_type=search_type, search_kwargs=search_kwargs)
 
     def get_status(self):
@@ -125,17 +236,79 @@ class KnowledgeBaseManager:
 
         :return: 一个包含文档数和片段数的字典。
         """
+        if not self.is_available:
+            return {
+                "doc_count": 0,
+                "chunk_count": 0,
+                "available": False,
+                "message": "Knowledge base service is not available"
+            }
+            
         doc_count = len(os.listdir(self.knowledge_base_dir))
         try:
+            self._ensure_initialized()
             # .count() is a method on the collection object in Chroma
             chunk_count = self.vector_store._collection.count()
         except Exception:
-            chunk_count = "N/A"
+            chunk_count = 0 # 如果初始化失败或没有集合，则为0
             
         return {
             "doc_count": doc_count,
-            "chunk_count": chunk_count
+            "chunk_count": chunk_count,
+            "available": True
         }
+
+    def delete_documents(self, file_paths: List[str]):
+        """
+        Deletes all chunks associated with the given file paths from the vector store.
+        """
+        self._ensure_initialized()
+        if not self.is_available:
+            print("Knowledge base is not available. Cannot delete documents.")
+            return
+
+        collection_data = self.vector_store._collection.get(where={"source": {"$in": file_paths}})
+        ids_to_delete = collection_data.get('ids', [])
+
+        if self.vector_store and ids_to_delete:
+            self.vector_store.delete(ids=ids_to_delete)
+            self.vector_store.persist()  # 强制持久化
+            print(f"Deleted {len(ids_to_delete)} chunks and persisted changes.")
+        else:
+            print(f"No chunks found to delete for files: {file_paths}")
+
+    def handle_doc_upload(self, uploaded_docs):
+        """
+        处理上传的文档，保存到知识库目录并处理
+        """
+        import streamlit as st
+        
+        if not self.is_available:
+            st.error("⚠️ Ollama embedding服务不可用，无法处理文档。")
+            return
+
+        for doc in uploaded_docs:
+            file_path = os.path.join(self.knowledge_base_dir, doc.name)
+            with open(file_path, "wb") as f:
+                f.write(doc.getbuffer())
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def progress_callback(progress, message):
+            progress_bar.progress(progress / 100)
+            status_text.info(message)
+
+        try:
+            self.load_and_process_documents(progress_callback=progress_callback)
+            status = self.get_status()
+            st.session_state.knowledge_base_status['status'] = "处理完成，已更新！"
+            st.session_state.knowledge_base_status['doc_count'] = status['doc_count']
+            st.session_state.knowledge_base_status['chunk_count'] = status['chunk_count']
+            st.success("文档处理成功！知识库已更新。")
+            st.rerun()
+        except Exception as e:
+            st.error(f"处理文档时出错: {e}")
 
 # Example usage (for testing purposes)
 if __name__ == '__main__':
