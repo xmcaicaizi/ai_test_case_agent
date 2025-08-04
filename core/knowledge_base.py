@@ -22,13 +22,24 @@ class CustomOllamaEmbeddings(Embeddings):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
-    def _call_ollama_with_retry(self, text: str) -> List[float]:
+    def _call_ollama_with_retry(self, text) -> List[float]:
         """调用Ollama embedding API，带重试机制"""
         for attempt in range(self.max_retries):
             try:
-                # 使用requests直接调用API
+                # 确保输入是字符串类型
+                if isinstance(text, dict):
+                    # 如果是字典，尝试获取文本内容
+                    processed_text = str(text.get('text', text))
+                elif isinstance(text, str):
+                    processed_text = text
+                else:
+                    # 其他类型转换为字符串
+                    processed_text = str(text)
+                
+                # 确保processed_text是字符串类型
+                processed_text = str(processed_text)
+                
                 # 为Qwen3 embedding模型添加特殊标记
-                processed_text = text
                 if "qwen3-embedding" in self.model.lower():
                     processed_text += "<|endoftext|>"
 
@@ -51,8 +62,12 @@ class CustomOllamaEmbeddings(Embeddings):
                     print(f"Ollama embedding attempt {attempt + 1} failed: {str(e)}. Retrying in {self.retry_delay}s...")
                     time.sleep(self.retry_delay)
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts) -> List[List[float]]:
         embeddings = []
+        # 确保 texts 是列表
+        if not isinstance(texts, list):
+            texts = [texts]
+            
         for i, text in enumerate(texts):
             try:
                 embedding = self._call_ollama_with_retry(text)
@@ -62,7 +77,7 @@ class CustomOllamaEmbeddings(Embeddings):
                 raise
         return embeddings
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text) -> List[float]:
         try:
             return self._call_ollama_with_retry(text)
         except Exception as e:
@@ -84,6 +99,7 @@ class KnowledgeBaseManager:
         self.embedding_function = None
         self.vector_store = None
         self.is_available = False  # 标记知识库是否可用
+        self._ensure_initialized()  # 初始化时就尝试连接
 
     def set_embedding_model(self, embedding_model_name: str):
         """
@@ -212,7 +228,7 @@ class KnowledgeBaseManager:
             if progress_callback: 
                 progress_callback(progress, f"正在处理 {i + len(batch_docs)} / {total_chunks} 个片段...")
 
-        self.vector_store.persist()  # 强制持久化
+        # ChromaDB 新版本会自动持久化，不需要手动调用 persist()
         print("Knowledge base processing complete.")
         if progress_callback: progress_callback(100, "知识库处理完成！")
 
@@ -272,7 +288,7 @@ class KnowledgeBaseManager:
 
         if self.vector_store and ids_to_delete:
             self.vector_store.delete(ids=ids_to_delete)
-            self.vector_store.persist()  # 强制持久化
+            # ChromaDB 新版本会自动持久化，不需要手动调用 persist()
             print(f"Deleted {len(ids_to_delete)} chunks and persisted changes.")
         else:
             print(f"No chunks found to delete for files: {file_paths}")

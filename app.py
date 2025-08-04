@@ -81,6 +81,35 @@ def get_kb_manager():
         embedding_model_name=st.session_state.embedding_model_name
     )
 
+def test_model_connection(model_config):
+    """测试模型连接"""
+    try:
+        from core.factory import AppFactory
+        
+        # 创建LLM集成器实例
+        llm_integrator = AppFactory.create_llm_integrator(
+            model_config['provider'],
+            model_config.get('model_name', ''),
+            model_config.get('api_key', ''),
+            model_config.get('base_url', '')
+        )
+        
+        # 获取LLM实例
+        llm = llm_integrator.get_llm()
+        
+        # 发送简单的测试消息
+        test_message = "你好，请回复'连接成功'"
+        response = llm.invoke(test_message)
+        
+        # 检查响应
+        if response and hasattr(response, 'content'):
+            return True, f"连接成功！模型响应: {response.content[:50]}..."
+        else:
+            return True, "连接成功！"
+            
+    except Exception as e:
+        return False, f"连接失败: {str(e)}"
+
 # --- 清理函数 ---
 def cleanup_directories():
     """清理知识库和数据库目录"""
@@ -118,16 +147,43 @@ if 'knowledge_base_status' not in st.session_state:
         "chunk_count": status['chunk_count'],
     }
 
-# --- 创建主页面标签 ---
-tab_generate, tab_kb, tab_settings = st.tabs([
-    "📄 生成测试用例", 
-    "📚 知识库管理", 
-    "⚙️ 模型设置"
-])
+# --- 初始化当前标签页状态 ---
+if 'current_tab' not in st.session_state:
+    st.session_state.current_tab = 0
 
+# --- 创建主页面导航 ---
+st.markdown("### 页面导航")
+tab_options = ["📄 生成测试用例", "📚 知识库管理", "⚙️ 模型设置"]
 
-# --- 页面一：生成测试用例 ---
-with tab_generate:
+# 使用列布局创建水平按钮组
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button(tab_options[0], use_container_width=True, 
+                type="primary" if st.session_state.current_tab == 0 else "secondary"):
+        if st.session_state.current_tab != 0:
+            st.session_state.current_tab = 0
+            st.rerun()
+
+with col2:
+    if st.button(tab_options[1], use_container_width=True,
+                type="primary" if st.session_state.current_tab == 1 else "secondary"):
+        if st.session_state.current_tab != 1:
+            st.session_state.current_tab = 1
+            st.rerun()
+
+with col3:
+    if st.button(tab_options[2], use_container_width=True,
+                type="primary" if st.session_state.current_tab == 2 else "secondary"):
+        if st.session_state.current_tab != 2:
+            st.session_state.current_tab = 2
+            st.rerun()
+
+st.markdown("---")
+
+# 根据选中的标签显示对应内容
+if st.session_state.current_tab == 0:
+    # --- 页面一：生成测试用例 ---
     st.header("在这里根据您的需求生成测试用例")
     
     # --- 侧边栏 ---
@@ -146,7 +202,16 @@ with tab_generate:
         
         use_kb = st.checkbox("5. 使用知识库增强生成", value=True)
         
-        st.write("---")
+        # Think 功能开关
+        current_model = get_model_settings_by_name(st.session_state.active_model_name)
+        is_qwen3 = current_model and 'qwen3' in current_model.get('model_name', '').lower()
+        
+        if is_qwen3:
+            enable_think = st.checkbox("6. 🤔 启用 Think 功能", value=False, 
+                                     help="启用后将显示 AI 的思考过程，可以看到模型如何分析和推理")
+        else:
+            enable_think = False
+            st.info("💡 Think 功能仅支持 Qwen3 系列模型")
         
         st.write("---")
         
@@ -222,7 +287,7 @@ with tab_generate:
         st.info(f"当前模型: **{st.session_state.embedding_model_name}**")
 
         from services.llm_service import generate_test_cases_with_llm
-        from services.rag_service import generate_test_cases_with_rag
+        from services.rag_service_with_think import generate_test_cases_with_rag_and_think
 
         if st.button("🚀 生成测试用例", type="primary", use_container_width=True):
             if not user_requirement and not uploaded_file:
@@ -243,7 +308,12 @@ with tab_generate:
 
                         if use_rag:
                             st.info("使用知识库增强生成...")
-                            response = generate_test_cases_with_rag(model_settings, num_cases, full_requirement, kb_manager)
+                            # 为 think 功能创建容器
+                            think_container = st.container() if enable_think else None
+                            response = generate_test_cases_with_rag_and_think(
+                                model_settings, num_cases, full_requirement, kb_manager, 
+                                enable_think=enable_think, think_container=think_container
+                            )
                         else:
                             st.info("直接使用LLM生成...")
                             response = generate_test_cases_with_llm(model_settings, num_cases, full_requirement)
@@ -278,12 +348,34 @@ with tab_generate:
             
             if test_cases_data:
                 # 将Pydantic对象转换为字典（如果需要）
-                if hasattr(test_cases_data[0], 'dict'):
-                    df_data = [case.dict() if hasattr(case, 'dict') else case for case in test_cases_data]
+                if hasattr(test_cases_data[0], 'model_dump'):
+                    df_data = [case.model_dump() if hasattr(case, 'model_dump') else case for case in test_cases_data]
+                elif hasattr(test_cases_data[0], 'dict'):
+                    df_data = [case.model_dump() if hasattr(case, 'model_dump') else (case.dict() if hasattr(case, 'dict') else case) for case in test_cases_data]
                 else:
                     df_data = test_cases_data
                 
-                df = pd.DataFrame(df_data)
+                # 在转换为DataFrame之前，先清理字典中的None和nan值
+                import numpy as np
+                cleaned_data = []
+                for case_dict in df_data:
+                    cleaned_case = {}
+                    for key, value in case_dict.items():
+                        # 处理各种可能的空值情况
+                        if value is None or value is np.nan or (isinstance(value, float) and np.isnan(value)) or str(value).lower() in ['nan', 'none', 'null']:
+                            cleaned_case[key] = ""
+                        else:
+                            cleaned_case[key] = str(value) if value is not None else ""
+                    cleaned_data.append(cleaned_case)
+                
+                df = pd.DataFrame(cleaned_data)
+                
+                # 双重保险：再次将所有 NaN 值替换为空字符串
+                df = df.fillna("")
+                
+                # 确保所有列都是字符串类型，避免数值类型的nan
+                for col in df.columns:
+                    df[col] = df[col].astype(str).replace(['nan', 'None', 'null', 'NaN'], "")
                 
                 # 创建结果展示的Tabs
                 result_tabs = st.tabs(["表格视图", "JSON 数据", "导出文件"])
@@ -306,9 +398,17 @@ with tab_generate:
                     )
 
                     # 导出为JSON
+                    # 将 Pydantic 对象转换为可序列化的字典
+                    if hasattr(results, 'model_dump'):
+                        json_data = results.model_dump()
+                    elif hasattr(results, 'dict'):
+                        json_data = results.dict()
+                    else:
+                        json_data = results
+                    
                     st.download_button(
                         label="下载为 JSON",
-                        data=pd.io.json.dumps(results, indent=2),
+                        data=json.dumps(json_data, indent=2, ensure_ascii=False),
                         file_name="test_cases.json",
                         mime="application/json",
                     )
@@ -336,9 +436,8 @@ with tab_generate:
     else:
         st.info("请在左侧输入需求并点击生成按钮。")
 
-
-# --- 页面二：知识库管理 ---
-with tab_kb:
+elif st.session_state.current_tab == 1:
+    # --- 页面二：知识库管理 ---
     st.header("管理您的知识库文档")
 
     # 导入必要的函数
@@ -530,8 +629,8 @@ with tab_kb:
         st.error(f"无法读取知识库目录：{e}")
 
 
-# --- 页面三：模型设置 ---
-with tab_settings:
+elif st.session_state.current_tab == 2:
+    # --- 页面三：模型设置 ---
     st.header("管理您的AI模型")
 
     # --- 模型列表 --- #
@@ -547,7 +646,7 @@ with tab_settings:
                 api_key_display = "*" * 10 if model.get('api_key') else "未设置"
                 st.text(f"API Key: {api_key_display}")
                 
-                col1, col2, col3 = st.columns([1,1,5])
+                col1, col2, col3, col4, col5 = st.columns([1,1,1,1,3])
                 with col1:
                     if st.button("设为活动模型", key=f"activate_{i}", use_container_width=True):
                         st.session_state.active_model_name = model['name']
@@ -556,6 +655,20 @@ with tab_settings:
                         st.success(f"模型 '{model['name']}' 已被激活！")
                         st.rerun()
                 with col2:
+                    if st.button("🔍 测试连接", key=f"test_{i}", use_container_width=True):
+                        with st.spinner("测试连接中..."):
+                            success, message = test_model_connection(model)
+                            if success:
+                                st.success(f"✅ {message}")
+                            else:
+                                st.error(f"❌ {message}")
+                with col3:
+                    if st.button("修改", key=f"edit_{i}", type="secondary", use_container_width=True):
+                        st.session_state.editing_model_index = i
+                        st.session_state.show_edit_form = True
+                        st.session_state.current_tab = 2  # 确保停留在模型设置页面
+                        st.rerun()
+                with col4:
                     if st.button("删除", key=f"delete_{i}", type="secondary", use_container_width=True):
                         # If deleting the active model, reset active model to the first one if possible
                         if st.session_state.active_model_name == model['name']:
@@ -566,6 +679,97 @@ with tab_settings:
                         config_manager.set_config('models', st.session_state.models)
                         st.success(f"模型 '{model.get('name')}' 已被删除！")
                         st.rerun()
+
+    # --- 修改模型表单 --- #
+    if hasattr(st.session_state, 'show_edit_form') and st.session_state.show_edit_form:
+        if hasattr(st.session_state, 'editing_model_index') and st.session_state.editing_model_index is not None:
+            editing_index = st.session_state.editing_model_index
+            if 0 <= editing_index < len(st.session_state.models):
+                editing_model = st.session_state.models[editing_index]
+                
+                st.write("---")
+                st.subheader("🔧 修改模型配置")
+                
+                with st.form(key="edit_model_form"):
+                    st.info(f"正在修改模型：{editing_model.get('name', '未知模型')}")
+                    
+                    # 预填充当前模型信息
+                    edit_name = st.text_input("模型别名*", value=editing_model.get('name', ''))
+                    edit_provider = st.selectbox(
+                        "选择模型提供商*", 
+                        ('Ollama', 'Qwen', 'Doubao', 'Gemini', 'OpenAICompatible'),
+                        index=('Ollama', 'Qwen', 'Doubao', 'Gemini', 'OpenAICompatible').index(editing_model.get('provider', 'OpenAICompatible'))
+                    )
+                    
+                    # 根据选择的提供商显示不同的提示
+                    if edit_provider == 'Qwen':
+                        qwen_models = ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-plus-latest', 'qwen-turbo-latest', 'qwen-max-latest']
+                        current_model = editing_model.get('model_name', 'qwen-plus')
+                        model_index = qwen_models.index(current_model) if current_model in qwen_models else 0
+                        edit_model_name = st.selectbox("通义千问模型*", qwen_models, index=model_index)
+                        edit_base_url = st.text_input("Base URL", value=editing_model.get('base_url', 'https://dashscope.aliyuncs.com/compatible-mode/v1'))
+                    elif edit_provider == 'Doubao':
+                        edit_model_name = st.text_input(
+                            "推理接入点 (Model ID)*",
+                            value=editing_model.get('model_name', ''),
+                            placeholder="ep-20250101000000-xxxxx",
+                            help="请输入在火山引擎控制台创建的推理接入点 ID"
+                        )
+                        edit_base_url = st.text_input("Base URL", value=editing_model.get('base_url', 'https://ark.cn-beijing.volces.com/api/v3'))
+                    elif edit_provider == 'Ollama':
+                        edit_model_name = st.text_input("模型名称*", value=editing_model.get('model_name', ''), placeholder="例如：qwen3:4b, llama3:8b")
+                        edit_base_url = st.text_input("Base URL", value=editing_model.get('base_url', 'http://127.0.0.1:11434'))
+                    else:
+                        edit_model_name = st.text_input("模型名称*", value=editing_model.get('model_name', ''), placeholder="例如：gpt-4, claude-3")
+                        edit_base_url = st.text_input("Base URL", value=editing_model.get('base_url', ''), placeholder="例如：https://api.openai.com/v1")
+                    
+                    # API Key 输入，显示当前值的提示
+                    current_api_key = editing_model.get('api_key', '')
+                    api_key_placeholder = "保持不变" if current_api_key else "请输入新的 API Key"
+                    edit_api_key = st.text_input("API Key", type="password", placeholder=api_key_placeholder, help="留空表示保持当前 API Key 不变")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.form_submit_button("保存修改", type="primary", use_container_width=True):
+                            if not edit_name or not edit_provider or not edit_model_name:
+                                st.error("模型别名、提供商和模型名称是必填项。")
+                            else:
+                                # 更新模型信息
+                                updated_model = {
+                                    'name': edit_name,
+                                    'provider': edit_provider,
+                                    'model_name': edit_model_name,
+                                    'api_key': edit_api_key if edit_api_key else current_api_key,  # 如果没有输入新的API Key，保持原有的
+                                    'base_url': edit_base_url
+                                }
+                                
+                                # 保留其他可能存在的字段
+                                for key, value in editing_model.items():
+                                    if key not in updated_model:
+                                        updated_model[key] = value
+                                
+                                # 更新模型列表
+                                st.session_state.models[editing_index] = updated_model
+                                config_manager.set_config('models', st.session_state.models)
+                                
+                                # 如果修改的是当前活动模型，更新活动模型信息
+                                if st.session_state.active_model_name == editing_model.get('name'):
+                                    st.session_state.active_model_name = edit_name
+                                    st.session_state.model_settings = updated_model
+                                    config_manager.set_config('active_model_name', edit_name)
+                                
+                                # 清除编辑状态
+                                st.session_state.show_edit_form = False
+                                st.session_state.editing_model_index = None
+                                
+                                st.success(f"模型 '{edit_name}' 配置已成功更新！")
+                                st.rerun()
+                    
+                    with col2:
+                        if st.form_submit_button("取消修改", use_container_width=True):
+                            st.session_state.show_edit_form = False
+                            st.session_state.editing_model_index = None
+                            st.rerun()
 
     st.write("---")
 
@@ -586,6 +790,25 @@ with tab_settings:
             
             if validate_qwen_api_key(qwen_api_key):
                 st.success("✅ API Key 格式验证通过")
+                
+                # 添加测试连接功能
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.write("**测试连接**")
+                with col2:
+                    if st.button("🔍 测试通义千问连接", key="test_qwen_connection"):
+                        with st.spinner("测试连接中..."):
+                            test_config = {
+                                'provider': 'Qwen',
+                                'model_name': 'qwen-plus',
+                                'api_key': qwen_api_key,
+                                'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+                            }
+                            success, message = test_model_connection(test_config)
+                            if success:
+                                st.success(f"✅ {message}")
+                            else:
+                                st.error(f"❌ {message}")
                 
                 qwen_models = get_qwen_model_list()
                 selected_qwen_models = st.multiselect(
@@ -651,6 +874,25 @@ with tab_settings:
             if validate_doubao_api_key(doubao_api_key):
                 st.success("✅ API Key 格式验证通过")
                 
+                # 添加测试连接功能
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.write("**测试连接**")
+                with col2:
+                    if st.button("🔍 测试豆包连接", key="test_doubao_connection"):
+                        with st.spinner("测试连接中..."):
+                            test_config = {
+                                'provider': 'Doubao',
+                                'model_name': 'doubao-seed-1.6',
+                                'api_key': doubao_api_key,
+                                'base_url': 'https://ark.cn-beijing.volces.com/api/v3'
+                            }
+                            success, message = test_model_connection(test_config)
+                            if success:
+                                st.success(f"✅ {message}")
+                            else:
+                                st.error(f"❌ {message}")
+                
                 doubao_models = get_doubao_model_list()
                 selected_doubao_models = st.multiselect(
                     "选择要添加的豆包模型",
@@ -699,6 +941,55 @@ with tab_settings:
 
     # --- 添加/编辑模型表单 --- #
     st.subheader("手动添加模型")
+    
+    # 测试连接区域（在表单外）
+    st.write("**测试模型连接**")
+    test_col1, test_col2, test_col3, test_col4, test_col5 = st.columns([1, 1, 1, 1, 1])
+    
+    with test_col1:
+        test_provider = st.selectbox("提供商", ('Ollama', 'Qwen', 'Doubao', 'Gemini', 'OpenAICompatible'), key="test_provider")
+    
+    with test_col2:
+        if test_provider == 'Qwen':
+            test_model_name = st.selectbox("模型", ['qwen-plus', 'qwen-turbo', 'qwen-max'], key="test_model_name")
+        elif test_provider == 'Doubao':
+            test_model_name = st.text_input("模型ID", placeholder="ep-xxx", key="test_model_name")
+        else:
+            test_model_name = st.text_input("模型名称", placeholder="模型名称", key="test_model_name")
+    
+    with test_col3:
+        if test_provider == 'Qwen':
+            test_base_url = st.text_input("Base URL", value="https://dashscope.aliyuncs.com/compatible-mode/v1", key="test_base_url")
+        elif test_provider == 'Doubao':
+            test_base_url = st.text_input("Base URL", value="https://ark.cn-beijing.volces.com/api/v3", key="test_base_url")
+        elif test_provider == 'Ollama':
+            test_base_url = st.text_input("Base URL", value="http://127.0.0.1:11434", key="test_base_url")
+        else:
+            test_base_url = st.text_input("Base URL", placeholder="API地址", key="test_base_url")
+    
+    with test_col4:
+        test_api_key = st.text_input("API Key", type="password", key="test_api_key")
+    
+    with test_col5:
+        if st.button("🔍 测试连接", key="test_manual_connection"):
+            if test_model_name and (test_provider == 'Ollama' or test_api_key):
+                with st.spinner("测试连接中..."):
+                    test_config = {
+                        'provider': test_provider,
+                        'model_name': test_model_name,
+                        'api_key': test_api_key,
+                        'base_url': test_base_url
+                    }
+                    success, message = test_model_connection(test_config)
+                    if success:
+                        st.success(f"✅ {message}")
+                    else:
+                        st.error(f"❌ {message}")
+            else:
+                st.warning("请填写必要的连接信息")
+    
+    st.write("---")
+    
     with st.form(key="add_model_form"):
         name = st.text_input("模型别名*", placeholder="例如：我的本地Qwen模型")
         provider = st.selectbox("选择模型提供商*", ('Ollama', 'Qwen', 'Doubao', 'Gemini', 'OpenAICompatible'))

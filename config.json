@@ -9,7 +9,7 @@
         {
             "name": "默认Ollama模型",
             "provider": "Ollama",
-            "model_name": "qwen3:4b",
+            "model_name": "qwen3:8b",
             "api_key": "",
             "base_url": "http://127.0.0.1:11434"
         },
@@ -92,5 +92,5 @@
             }
         }
     ],
-    "active_model_name": "默认Ollama模型"
+    "active_model_name": "通义千问-Turbo"
 }
