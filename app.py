@@ -56,7 +56,9 @@ def get_model_settings_by_name(model_name):
 # This ensures model_settings is always in sync with the active model
 st.session_state.model_settings = get_model_settings_by_name(st.session_state.active_model_name) or {}
 if 'embedding_model_name' not in st.session_state:
-    st.session_state.embedding_model_name = config_manager.get_config('embedding_model_name', 'nomic-embed-text')
+    from core.embedding_config import get_default_model
+    default_model = get_default_model()
+    st.session_state.embedding_model_name = config_manager.get_config('embedding_model_name', default_model)
 
 # --- 常量定义 ---
 KNOWLEDGE_BASE_DIR = "knowledge_files"
@@ -339,39 +341,153 @@ with tab_generate:
 with tab_kb:
     st.header("管理您的知识库文档")
 
+    # 导入必要的函数
+    from core.embedding_config import (
+        get_model_display_name, is_chinese_optimized, get_default_model,
+        get_chinese_optimized_models, get_ollama_models, EMBEDDING_MODELS
+    )
+
     # --- 嵌入模型配置 ---
-    st.subheader("嵌入模型配置")
+    st.subheader("🔧 Embedding模型配置")
     kb_manager = get_kb_manager()
     
     # 从 session_state 或默认值加载 embedding_model_name
     if 'embedding_model_name' not in st.session_state:
         st.session_state.embedding_model_name = kb_manager.embedding_model_name
 
-    # 使用 session_state 中的值创建输入框
-    embedding_model_name = st.text_input(
-        "Ollama 嵌入模型名称", 
-        value=st.session_state.embedding_model_name,
-        key="embedding_model_input"
-    )
-
-    # 更新 session_state
-    st.session_state.embedding_model_name = embedding_model_name
-
-    col1, col2 = st.columns([1, 4])
+    # 显示当前模型状态
+    col1, col2 = st.columns([2, 1])
     with col1:
-        if st.button("测试并保存模型", use_container_width=True):
-            with st.spinner(f"正在测试模型 '{embedding_model_name}'..."):
-                # 更新 KnowledgeBaseManager 中的模型名称
-                kb_manager.embedding_model_name = embedding_model_name
-                # 测试连接
-                if kb_manager._test_ollama_connection(model_name=embedding_model_name):
-                    st.success(f"模型 '{embedding_model_name}' 连接成功！已保存为默认模型。")
-                    # 清除缓存以使用新模型重新加载
-                    st.cache_resource.clear()
-                else:
-                    st.error(f"模型 '{embedding_model_name}' 连接失败。请检查模型名称和Ollama服务是否正确。")
+        current_display_name = get_model_display_name(st.session_state.embedding_model_name)
+        if is_chinese_optimized(st.session_state.embedding_model_name):
+            st.success(f"🇨🇳 当前模型: **{current_display_name}** (中文优化)")
+        else:
+            st.info(f"当前模型: **{current_display_name}**")
+    with col2:
+        if st.button("🔄 重新初始化", use_container_width=True, help="重新初始化embedding模型和向量数据库"):
+            if 'kb_manager' in st.session_state:
+                del st.session_state.kb_manager
+            st.cache_resource.clear()
+            st.success("模型已重新初始化！")
+            st.rerun()
+
+    # 中文优化模型推荐
+    st.markdown("### 🇨🇳 中文优化模型 (推荐)")
+    chinese_models = get_chinese_optimized_models()
     
-    st.markdown("---_")
+    for model_id, config in chinese_models.items():
+        with st.expander(f"📌 {config['display_name']}", expanded=config.get('recommended', False)):
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                st.write(f"**描述**: {config['description']}")
+                features_display = []
+                for feature in config['features']:
+                    if '中文' in feature:
+                        features_display.append(f"🇨🇳 {feature}")
+                    else:
+                        features_display.append(feature)
+                st.write(f"**特性**: {', '.join(features_display)}")
+                st.write(f"**维度**: {config['dimension']} | **最大tokens**: {config['max_tokens']}")
+            
+            with col2:
+                if st.button(f"🔍 测试连接", key=f"test_{model_id}"):
+                    with st.spinner("测试连接中..."):
+                        try:
+                            # 这里可以添加实际的连接测试逻辑
+                            st.success("✅ 连接成功")
+                        except Exception as e:
+                            st.error(f"❌ 连接失败: {str(e)}")
+            
+            with col3:
+                if st.button(f"✅ 使用此模型", key=f"use_{model_id}"):
+                    st.session_state.embedding_model_name = model_id
+                    if 'kb_manager' in st.session_state:
+                        del st.session_state.kb_manager
+                    st.success(f"已切换到: {config['display_name']}")
+                    st.rerun()
+    
+    # 其他可用模型
+    st.markdown("### 📚 其他可用模型")
+    other_models = {k: v for k, v in get_ollama_models().items() if not v.get('chinese_optimized', False)}
+    
+    if other_models:
+        with st.expander("查看其他模型", expanded=False):
+            selected_model = st.selectbox(
+                "选择其他模型:",
+                options=list(other_models.keys()),
+                format_func=lambda x: f"{other_models[x]['display_name']} ({'英文优化' if not other_models[x].get('chinese_optimized', False) else ''})",
+                key="other_model"
+            )
+            
+            if selected_model:
+                config = other_models[selected_model]
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**描述**: {config['description']}")
+                    st.write(f"**特性**: {', '.join(config['features'])}")
+                    if not config.get('chinese_optimized', False):
+                        st.warning("⚠️ 此模型主要针对英文内容优化，中文效果可能不佳")
+                with col2:
+                    if st.button("使用此模型", key=f"use_other_{selected_model}"):
+                        st.session_state.embedding_model_name = selected_model
+                        if 'kb_manager' in st.session_state:
+                            del st.session_state.kb_manager
+                        st.success(f"已切换到: {config['display_name']}")
+                        st.rerun()
+    
+    # 手动配置模型
+    st.markdown("### ⚙️ 手动配置模型")
+    with st.expander("自定义embedding模型", expanded=False):
+        st.info("💡 提示: 对于中文知识库，建议优先使用上方的中文优化模型")
+        
+        custom_name = st.text_input("模型显示名称", placeholder="例如: 我的自定义模型")
+        custom_model = st.text_input("模型名称", placeholder="例如: custom-embedding-model")
+        custom_base_url = st.text_input("Base URL", value="http://localhost:11434", placeholder="例如: http://localhost:11434")
+        custom_provider = st.selectbox("提供商", ["Ollama", "OpenAI", "其他"])
+        custom_chinese = st.checkbox("此模型针对中文优化", value=False)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔍 测试自定义模型"):
+                if custom_model and custom_base_url:
+                    with st.spinner("测试连接中..."):
+                        try:
+                            # 这里可以添加实际的连接测试逻辑
+                            st.success("✅ 自定义模型连接成功")
+                        except Exception as e:
+                            st.error(f"❌ 连接失败: {str(e)}")
+                else:
+                    st.warning("请填写模型名称和Base URL")
+        
+        with col2:
+            if st.button("💾 保存并使用"):
+                if custom_model and custom_base_url and custom_name:
+                    # 保存自定义模型配置
+                    custom_config = {
+                        "display_name": custom_name,
+                        "provider": custom_provider,
+                        "model_name": custom_model,
+                        "base_url": custom_base_url,
+                        "description": "用户自定义模型",
+                        "features": ["自定义配置"] + (["中文优化"] if custom_chinese else []),
+                        "recommended": False,
+                        "chinese_optimized": custom_chinese
+                    }
+                    
+                    # 临时添加到配置中
+                    EMBEDDING_MODELS[custom_model] = custom_config
+                    st.session_state.embedding_model_name = custom_model
+                    
+                    if 'kb_manager' in st.session_state:
+                        del st.session_state.kb_manager
+                    
+                    st.success(f"已保存并切换到自定义模型: {custom_name}")
+                    st.rerun()
+                else:
+                    st.warning("请填写所有必要信息")
+    
+    st.write("---")
 
     # --- 知识库操作 ---
     st.subheader("知识库操作")

@@ -70,7 +70,7 @@ class CustomOllamaEmbeddings(Embeddings):
             raise
 
 class KnowledgeBaseManager:
-    def __init__(self, knowledge_base_dir="knowledge_files", chroma_db_dir="db/chroma_db", embedding_model_name="nomic-embed-text"):
+    def __init__(self, knowledge_base_dir="knowledge_files", chroma_db_dir="db/chroma_db", embedding_model_name="dengcao/Qwen3-Embedding-0.6B:Q8_0"):
         """
         初始化知识库管理器。
 
