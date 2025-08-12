@@ -56,7 +56,7 @@
 
 ## 效果图
 ![image.png](image\image.png)
-![image.png](image\image2.png)
-![image.png](image\image3.png)
+![image2.png](image\image2.png)
+![image3.png](image\image3.png)
 
 
