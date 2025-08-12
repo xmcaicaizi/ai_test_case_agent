@@ -55,8 +55,8 @@
 - 关于 **Think 功能** 的详细介绍，请参考 <mcfile name="THINK_FEATURE_GUIDE.md" path="d:\Desktop\ai_test_case_agent\THINK_FEATURE_GUIDE.md"></mcfile>。
 
 ## 效果图
-![image.png](image\image.png)
-![image2.png](image\image2.png)
-![image3.png](image\image3.png)
+![image.png](image/image.png)
+![image2.png](image/image2.png)
+![image3.png](image/image3.png)
 
 
